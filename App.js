@@ -1,124 +1,61 @@
 const express = require('express');
-const fs = require('fs');
 const path = require('path');
+const exphbs = require('express-handlebars');
+const socketIO = require('socket.io');
 
 const app = express();
-const productsFilePath = path.join(__dirname, 'productos.json');
-const cartsFilePath = path.join(__dirname, 'carrito.json');
 
+// Configuracion de Handlebars 
+app.engine('handlebars', exphbs.engine());
+app.set('view engine', 'handlebars');
+app.set('views', path.join(__dirname, 'views'));
 
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Ruta GET 
-app.get('/api/products', (req, res) => {
-  const products = readJSONFile(productsFilePath);
-  res.json(products);
-});
+// Importa los archivos de ruta
+const homeRouter = require('./routes/home');
+const realtimeProductsRouter = require('./routes/realtimeproducts');
+const apiRouter = require('./routes/api');
+const cartsRouter = require('./routes/carts');
 
+// Routes
+app.use('/', homeRouter);
+app.use('/realtimeproducts', realtimeProductsRouter);
+app.use('/api', apiRouter);
+app.use('/api', cartsRouter);
 
-app.get('/api/products/:pid', (req, res) => {
-  const productId = req.params.pid;
-  const product = readJSONFile(productsFilePath).find(p => p.id === productId);
-  res.json(product);
-});
-
-// Ruta PUT 
-app.put('/api/products/:pid', (req, res) => {
-  const productId = req.params.pid;
-  const updatedProduct = req.body;
-  const products = readJSONFile(productsFilePath);
-  const updatedProducts = products.map(p => (p.id === productId ? { ...p, ...updatedProduct } : p));
-  writeJSONFile(productsFilePath, updatedProducts);
-  res.send(`Producto con ID ${productId} actualizado correctamente`);
-});
-
-// Ruta DELETE 
-app.delete('/api/products/:pid', (req, res) => {
-  const productId = req.params.pid;
-  const products = readJSONFile(productsFilePath);
-  const updatedProducts = products.filter(p => p.id !== productId);
-  writeJSONFile(productsFilePath, updatedProducts);
-  res.send(`Producto con ID ${productId} eliminado correctamente`);
-});
-
-// Ruta POST 
-app.post('/api/carts', (req, res) => {
-  const newCart = {
-    id: generateId(),
-    products: []
-  };
-  
-  const carts = readJSONFile(cartsFilePath);
-  carts.push(newCart);
-  writeJSONFile(cartsFilePath, carts);
-  res.json(newCart);
-});
-
-
-app.get('/api/carts/:cid', (req, res) => {
-  const cartId = req.params.cid;
-  const cart = readJSONFile(cartsFilePath).find(c => c.id === cartId);
-  res.json(cart);
-});
-
-
-app.post('/api/carts/:cid/product/:pid', (req, res) => {
-  const cartId = req.params.cid;
-  const productId = req.params.pid;
-  const quantity = req.body.quantity || 1;
-
-  
-  const carts = readJSONFile(cartsFilePath);
-  const cartIndex = carts.findIndex(c => c.id === cartId);
-
-  if (cartIndex !== -1) {
-    const cart = carts[cartIndex];
-    const existingProductIndex = cart.products.findIndex(p => p.product === productId);
-
-    if (existingProductIndex !== -1) {
-      // si el producto ya existe en el carrito aumentar la cantidad
-      cart.products[existingProductIndex].quantity += quantity;
-    } else {
-      // Agregar el producto al carrito
-      cart.products.push({ product: productId, quantity });
-    }
-
-    writeJSONFile(cartsFilePath, carts);
-    res.send(`Producto con ID ${productId} agregado correctamente al carrito con ID ${cartId}`);
-  } else {
-    res.status(404).send(`No se encontró el carrito con ID ${cartId}`);
-  }
-});
-
-
-function readJSONFile(filePath) {
-  try {
-    const fileData = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(fileData);
-  } catch (error) {
-    console.error(`Error ${filePath}: ${error}`);
-    return [];
-  }
-}
-
-
-function writeJSONFile(filePath, data) {
-  try {
-    const fileData = JSON.stringify(data, null, 2);
-    fs.writeFileSync(filePath, fileData, 'utf-8');
-  } catch (error) {
-    console.error(`Error ${filePath}: ${error}`);
-  }
-}
-
-
-function generateId() {
-  return Date.now().toString();
-}
-
-//servidor
-app.listen(8080, () => {
+// IO server
+const server = app.listen(8080, () => {
   console.log('Servidor funcionando en puerto 8080');
 });
 
+const io = socketIO(server);
 
+io.on('connection', (socket) => {
+  console.log('New client connected');
+
+  socket.on('productAdded', (product) => {
+    // Agregar producto a json
+    const products = readJSONFile(productsFilePath);
+    products.push(product);
+    writeJSONFile(productsFilePath, products);
+
+    
+    io.emit('updateProducts', products);
+  });
+
+  socket.on('productRemoved', (productId) => {
+    // borrar producto de json
+    const products = readJSONFile(productsFilePath);
+    const updatedProducts = products.filter((product) => product.id !== productId);
+    writeJSONFile(productsFilePath, updatedProducts);
+
+    
+    io.emit('updateProducts', updatedProducts);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
+  });
+});
