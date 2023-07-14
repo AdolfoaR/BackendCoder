@@ -2,10 +2,11 @@ const express = require('express');
 const path = require('path');
 const exphbs = require('express-handlebars');
 const socketIO = require('socket.io');
+const mongoose = require('mongoose');
 
 const app = express();
 
-// Configuracion de Handlebars 
+// Configuracion Handlebars 
 app.engine('handlebars', exphbs.engine());
 app.set('view engine', 'handlebars');
 app.set('views', path.join(__dirname, 'views'));
@@ -13,7 +14,21 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Importa los archivos de ruta
+// Connectar MongoDB
+mongoose.connect('mongodb+srv://pruebamongo:<password>@cluster0.6wtwnwl.mongodb.net/?retryWrites=true&w=majority', { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => {
+    console.log('Conexión exitosa a la base de datos');
+  })
+  .catch((error) => {
+    console.error('Error de conexión a la base de datos', error);
+  });
+
+// Importar models
+const Cart = require('./dao/models/cartModel');
+const Message = require('./dao/models/messageModel');
+const Product = require('./dao/models/productModel');
+
+//  routes
 const homeRouter = require('./routes/home');
 const realtimeProductsRouter = require('./routes/realtimeproducts');
 const apiRouter = require('./routes/api');
@@ -25,7 +40,7 @@ app.use('/realtimeproducts', realtimeProductsRouter);
 app.use('/api', apiRouter);
 app.use('/api', cartsRouter);
 
-// IO server
+// Socket.IO server
 const server = app.listen(8080, () => {
   console.log('Servidor funcionando en puerto 8080');
 });
@@ -36,23 +51,24 @@ io.on('connection', (socket) => {
   console.log('New client connected');
 
   socket.on('productAdded', (product) => {
-    // Agregar producto a json
-    const products = readJSONFile(productsFilePath);
-    products.push(product);
-    writeJSONFile(productsFilePath, products);
-
-    
-    io.emit('updateProducts', products);
+    const newProduct = new Product(product);
+    newProduct.save()
+      .then(() => {
+        io.emit('updateProducts', product);
+      })
+      .catch((error) => {
+        console.error('Error al agregar el producto', error);
+      });
   });
 
   socket.on('productRemoved', (productId) => {
-    // borrar producto de json
-    const products = readJSONFile(productsFilePath);
-    const updatedProducts = products.filter((product) => product.id !== productId);
-    writeJSONFile(productsFilePath, updatedProducts);
-
-    
-    io.emit('updateProducts', updatedProducts);
+    Product.findByIdAndRemove(productId)
+      .then(() => {
+        io.emit('removeProduct', productId);
+      })
+      .catch((error) => {
+        console.error('Error al eliminar el producto', error);
+      });
   });
 
   socket.on('disconnect', () => {
